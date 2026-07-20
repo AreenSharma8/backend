@@ -68,7 +68,7 @@ userSchema.methods.generateAccessToken = function () {
     process.env.ACCESS_TOKEN_SECRET, {
         expiresIn: process.env.ACCESS_TOKEN_EXPIRES_IN
     });
-}
+} //Access token is used for authentication and authorization, it contains user information and has a short expiration time. 
 
 userSchema.methods.generateRefreshToken = function () {
     return jwt.sign({
@@ -77,6 +77,6 @@ userSchema.methods.generateRefreshToken = function () {
     process.env.REFRESH_TOKEN_SECRET, {
         expiresIn: process.env.REFRESH_TOKEN_EXPIRES_IN
     });
-}
+} //Refresh token is used to obtain a new access token when the current one expires, it has a longer expiration time and is stored securely on the client side.
 
 export const User = mongoose.model('User', userSchema);
