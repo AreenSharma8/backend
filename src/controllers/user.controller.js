@@ -3,6 +3,7 @@ import apiError from "../utils/apiErrors.js";
 import { User } from "../models/user.model.js";
 import { uploadOnCloudinary } from "../utils/cloudinary.js";
 import apiResponse from "../utils/apiResponse.js";
+import jwt from "jsonwebtoken";
 
 const generateAccessAndRefreshTokens = async (userId) => {
     try {
@@ -142,7 +143,7 @@ const loginUser = asyncHandler( async (req, res) => {
 
     const options = {
         httpOnly: true,
-        secure: true
+        secure: process.env.NODE_ENV === "production"
     }
 
     // 6. send cookie
@@ -168,8 +169,18 @@ const logoutUser = asyncHandler(async(req, res) => {
 
     const options = {
         httpOnly: true,
-        secure: true
+        secure: process.env.NODE_ENV === "production"
     }
+
+    await User.findByIdAndUpdate(
+        req.user._id,
+        {
+            $set: {refreshToken: undefined}
+        },
+        {
+            new: true
+        }
+    )  
 
     return res.status(200)
     .clearCookie("accessToken", options)
@@ -179,5 +190,60 @@ const logoutUser = asyncHandler(async(req, res) => {
     )
 })
 
+const refreshAccessToken = asyncHandler(async (req, res) => {
+    const incomingRefreshToken = req.cookies.refreshToken || req.body.refreshToken
 
-export {registerUser, loginUser, logoutUser};
+    if(!incomingRefreshToken){
+        throw new apiError(401, "Unauthorized Request")
+    }
+
+    try {
+        const decodedToken = jwt.verify(incomingRefreshToken, process.env.REFRESH_TOKEN_SECRET)
+    
+        const user = await User.findById(decodedToken?._id).select("-password -refreshToken")
+        if(!user){
+            throw new apiError(401, "Unauthorized Request")
+        }
+
+        if(incomingRefreshToken !== user.refreshToken){
+            throw new apiError(401, "Refresh token is expired or invalid")
+        }
+
+        const option = {
+            httpOnly: true,
+            secure: process.env.NODE_ENV === "production"
+        }
+
+        const {accessToken, newrefreshToken} = await generateAccessAndRefreshTokens(user._id)
+
+       return res.status(200)
+        .cookie("accessToken", accessToken, option)
+        .cookie("refreshToken", newrefreshToken, option)
+        .json(
+            new apiResponse(200, {user, accessToken, refreshToken: newrefreshToken}, "Access token refreshed successfully")
+        )
+    }
+    catch (error) {
+        throw new apiError(401, "Unauthorized Request", error?.message || error)
+    }
+})
+
+const changeCurrentPassword = asyncHandler(async (req, res) => {
+    const {currentPassword, newPassword} = req.body
+
+    const user = await User.findById(req.body.user._id)
+    const isPasswordCorrect = await user.comparePassword(currentPassword)
+
+    if(!isPasswordCorrect){
+        throw new apiError(400, "Current password is incorrect")
+    }
+
+    user.password = newPassword
+    await user.save({validateBeforeSave: false})
+
+    return res.status(200).json(
+        new apiResponse(200, {}, "Password changed successfully")
+    )
+})
+
+export {registerUser, loginUser, logoutUser, refreshAccessToken};
