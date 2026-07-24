@@ -34,7 +34,7 @@ const userSchema = new Schema({
         default: 'https://res.cloudinary.com/dxjzq3v0f/image/upload/v1690912345/default-cover-image.png',
         required: false
     },
-    watchhistory: [{
+    watchHistory: [{
         type: Schema.Types.ObjectId,
         ref: "Video"
     }],
@@ -43,7 +43,7 @@ const userSchema = new Schema({
         required: [true, "Password is required"],
         minlength: 6
     },
-    refreshtoken: {
+    refreshToken: {
         type: String,
     }
 }, {timestamps: true});

@@ -4,6 +4,7 @@ import { User } from "../models/user.model.js";
 import { uploadOnCloudinary } from "../utils/cloudinary.js";
 import apiResponse from "../utils/apiResponse.js";
 import jwt from "jsonwebtoken";
+import mongoose from "mongoose";
 
 const generateAccessAndRefreshTokens = async (userId) => {
     try {
@@ -13,7 +14,7 @@ const generateAccessAndRefreshTokens = async (userId) => {
         const refreshToken = user.generateRefreshToken();
 
         user.refreshToken = refreshToken;
-        await user.save();
+        await user.save({ validateBeforeSave: false });
 
         return {accessToken, refreshToken}
     }
@@ -91,7 +92,7 @@ const registerUser = asyncHandler(async (req, res) => {
 
     // 6. remove password and refresh token from the response
     const createdUser = await User.findById(user._id).select(
-        "-password -refreshtoken"
+        "-password -refreshToken"
     )
     if(!createdUser){
         throw new apiError(500, "Something went wrong while creating user")
@@ -139,7 +140,7 @@ const loginUser = asyncHandler( async (req, res) => {
     // 5. generate access token and refresh token
     const {accessToken, refreshToken} = await generateAccessAndRefreshTokens(user._id);
 
-    const loggedInUser = await User.findById(user._id).select("-password -refreshtoken")
+    const loggedInUser = await User.findById(user._id).select("-password -refreshToken")
 
     const options = {
         httpOnly: true,
@@ -160,7 +161,7 @@ const logoutUser = asyncHandler(async(req, res) => {
     User.findByIdAndUpdate(
         req.user._id,
         {
-            $set: {refreshToken: undefined}
+            $unset: {refreshToken: 1}
         },
         {
             new: true
@@ -200,7 +201,7 @@ const refreshAccessToken = asyncHandler(async (req, res) => {
     try {
         const decodedToken = jwt.verify(incomingRefreshToken, process.env.REFRESH_TOKEN_SECRET)
     
-        const user = await User.findById(decodedToken?._id).select("-password -refreshToken")
+        const user = await User.findById(decodedToken?._id).select("-password")
         if(!user){
             throw new apiError(401, "Unauthorized Request")
         }
@@ -214,13 +215,13 @@ const refreshAccessToken = asyncHandler(async (req, res) => {
             secure: process.env.NODE_ENV === "production"
         }
 
-        const {accessToken, newrefreshToken} = await generateAccessAndRefreshTokens(user._id)
+        const {accessToken, refreshToken} = await generateAccessAndRefreshTokens(user._id)
 
        return res.status(200)
         .cookie("accessToken", accessToken, option)
-        .cookie("refreshToken", newrefreshToken, option)
+        .cookie("refreshToken", refreshToken, option)
         .json(
-            new apiResponse(200, {user, accessToken, refreshToken: newrefreshToken}, "Access token refreshed successfully")
+            new apiResponse(200, {user, accessToken, refreshToken}, "Access token refreshed successfully")
         )
     }
     catch (error) {
@@ -231,7 +232,7 @@ const refreshAccessToken = asyncHandler(async (req, res) => {
 const changeCurrentPassword = asyncHandler(async (req, res) => {
     const {currentPassword, newPassword} = req.body
 
-    const user = await User.findById(req.body.user._id)
+    const user = await User.findById(req.user._id)
     const isPasswordCorrect = await user.comparePassword(currentPassword)
 
     if(!isPasswordCorrect){
@@ -246,15 +247,18 @@ const changeCurrentPassword = asyncHandler(async (req, res) => {
     )
 })
 
+
 const getCurrentUser = asyncHandler(async (req, res) => {
     return res.status(200)
-    .json(200, req.user, "current user fetched successfully")
+    .json(
+        new apiResponse(200, {user: req.user}, "Current user fetched successfully")
+    )
 })
 
 const updateAccountDetails = asyncHandler(async (req, res) => {
-    const {fullname, username, email} = req.body
+    const { fullname, username, email } = req.body ?? {}
 
-    if(!fullname && !username && !email){
+    if (!fullname && !username && !email) {
         throw new apiError(400, "At least one field is required to update")
     }
 
@@ -262,9 +266,9 @@ const updateAccountDetails = asyncHandler(async (req, res) => {
         req.user._id,
         {
             $set: {
-                fullname: fullname ?? req.user.fullname,
-                username: username ?? req.user.username,
-                email: email ?? req.user.email
+                ...(fullname && { fullname }),
+                ...(username && { username }),
+                ...(email && { email })
             }
         },
         { new: true }
@@ -272,7 +276,7 @@ const updateAccountDetails = asyncHandler(async (req, res) => {
 
     return res.status(200).json(
         new apiResponse(200, { user: updatedUser }, "Account details updated successfully")
-    ) 
+    )
 })
 
 const updateUserAvatar = asyncHandler(async (req,res) => {
@@ -342,7 +346,7 @@ const getUserChannelProfile = asyncHandler(async(req, res) => {
         },
         {
             $lookup: {
-                from: "subscription",
+                from: "subscriptions",
                 localField: "_id",
                 foreignField: "channel",
                 as: "subscribers"
@@ -350,7 +354,7 @@ const getUserChannelProfile = asyncHandler(async(req, res) => {
         },
         {
             $lookup: {
-                from: "subscription",
+                from: "subscriptions",
                 localField: "_id",
                 foreignField: "subscriber",
                 as: "subscribedTo"
@@ -361,7 +365,7 @@ const getUserChannelProfile = asyncHandler(async(req, res) => {
                 subscribersCount: {$size: "$subscribers"},
                 subscribedChannelsCount: {$size: "$subscribedTo"},
                 isSubscribed: {
-                    $condition: {
+                    $cond: {
                         if: {
                             $in: [req.user._id, "$subscribers.subscriber"]
                         },
@@ -403,14 +407,14 @@ const getWatchHistory = asyncHandler(async (req, res) => {
         },
         {
             $lookup: {
-                from: "video",
+                from: "videos",
                 localField: "watchHistory",
                 foreignField: "_id",
                 as: "watchHistory",
                 pipeline: [
                     {
                         $lookup: {
-                            from: "user",
+                            from: "users",
                             localField: "owner",
                             foreignField: "_id",
                             as: "owner",
@@ -440,7 +444,7 @@ const getWatchHistory = asyncHandler(async (req, res) => {
     return res
     .status(200)
     .json(
-        new apiResponse(200, watchHistory[0].watchHistory, "Watch history fetched successfully")
+        new apiResponse(200, watchHistory[0]?.watchHistory ?? [], "Watch history fetched successfully")
     )
 })
 
